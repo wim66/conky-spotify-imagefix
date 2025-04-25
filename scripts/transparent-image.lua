@@ -5,10 +5,20 @@ usage: ${lua conky_image /path/to/picture 0 0 164 164}
 ]]
 
 require 'cairo'
+-- Attempt to safely require the 'cairo_xlib' module
 local status, cairo_xlib = pcall(require, 'cairo_xlib')
+
 if not status then
-    cairo_xlib = setmetatable({}, { __index = _G })
+    -- If not found, fall back to a dummy table
+    -- Redirects unknown keys to the global namespace (_G)
+    -- Allows use of global Cairo functions like cairo_xlib_surface_create
+    cairo_xlib = setmetatable({}, {
+        __index = function(_, key)
+            return _G[key]
+        end
+    })
 end
+
 home_path = os.getenv('HOME')
 
 function fDrawImage(cr, path, xx, yy, ww, hh)
