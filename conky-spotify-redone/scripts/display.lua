@@ -25,8 +25,14 @@ local parent_path = script_path:match("^(.*[\\/])resources[\\/].*$") or ""
 package.path = package.path .. ";" .. parent_path .. "?.lua"
 
 local status, err = pcall(function() require("settings") end)
-if not status then return end
-if not conky_vars then return end
+if not status then
+    print("Error loading settings.lua: " .. err)
+    return
+end
+if not conky_vars then
+    print("Error: conky_vars not defined")
+    return
+end
 conky_vars()
 
 -- === Utility ===
@@ -36,6 +42,7 @@ local unpack = table.unpack or unpack  -- Compatibility for Lua 5.1 and newer
 local function execute_script(script_path)
     local handle = io.popen(script_path .. " 2>/dev/null")
     if not handle then
+        print("Error executing script: " .. script_path)
         return "Unknown"
     end
     local result = handle:read("*a")
@@ -47,9 +54,10 @@ end
 
 -- === Execute cover script (no output expected) ===
 local function execute_cover_script()
-    local script_path = "scripts/cover.sh"
+    local script_path = parent_path .. "scripts/cover.sh"
     local handle = io.popen("timeout 2 " .. script_path .. " 2>&1")
     if not handle then
+        print("Error executing cover script")
         return false
     end
     handle:close()
@@ -61,6 +69,7 @@ local function get_spotify_metadata()
     local cmd = [[dbus-send --print-reply --dest=org.mpris.MediaPlayer2.spotify /org/mpris/MediaPlayer2 org.freedesktop.DBus.Properties.Get string:'org.mpris.MediaPlayer2.Player' string:'Metadata']]
     local handle = io.popen(cmd .. " 2>&1")
     if not handle then
+        print("Error fetching metadata")
         return { title = "Unknown Title", artist = "Unknown Artist", album = "Unknown Album" }
     end
     local output = handle:read("*a")
@@ -87,6 +96,22 @@ local function get_spotify_metadata()
     end
 
     return metadata
+end
+
+-- === Fetch progress data ===
+local function get_progress_data()
+    local script_path = parent_path .. "scripts/progress.sh"
+    local progress = execute_script(script_path)
+    local percent, elapsed, remaining = progress:match("(%d+)|([^|]+)|([^|]+)")
+    percent = tonumber(percent) or 0
+    elapsed = elapsed or "0:00"
+    remaining = remaining or "0:00"
+--    print("Progress data: percent=" .. percent .. ", elapsed=" .. elapsed .. ", remaining=" .. remaining)
+    return {
+        percent = percent,
+        elapsed = elapsed,
+        remaining = remaining
+    }
 end
 
 -- === Color parsing helpers ===
@@ -200,7 +225,7 @@ local boxes_settings = {
     -- Label: Artist
     {
         type = "text",
-        x = 180, y = 74,
+        x = 180, y = 66,
         text = "Artist:",
         font = "Noto Sans",
         font_size = 12,
@@ -211,7 +236,7 @@ local boxes_settings = {
     -- Metadata: Artist
     {
         type = "text",
-        x = 190, y = 100,
+        x = 190, y = 92,
         text = "artist",
         font = "GE Inspira",
         font_size = 22,
@@ -222,7 +247,7 @@ local boxes_settings = {
     -- Label: Album
     {
         type = "text",
-        x = 180, y = 130,
+        x = 180, y = 112,
         text = "Album:",
         font = "Noto Sans",
         font_size = 12,
@@ -233,10 +258,54 @@ local boxes_settings = {
     -- Metadata: Album
     {
         type = "text",
-        x = 190, y = 156,
+        x = 190, y = 138,
         text = "album",
         font = "GE Inspira",
         font_size = 22,
+        colour = {{1, 0xFFFFFF, 1}}, -- White text
+        draw_me = true
+    },
+
+    -- Progress bar (filled)
+    {
+        type = "background",
+        x = 180, y = 158, w = 0, h = 6, -- Dynamic width
+        centre_x = false,
+        corners = {0, 0, 0, 0},
+        draw_me = true,
+        colour = {{1, 0xff5500, 1}} -- Orange
+    },
+
+    -- Progress bar border
+    {
+        type = "border",
+        x = 180, y = 158, w = 470, h = 6,
+        centre_x = false,
+        corners = {0, 0, 0, 0},
+        draw_me = true,
+        border = 1,
+        colour = {{1, 0xaa7b9e, 1}}, -- Purple-ish
+        linear_gradient = {180, 161, 650, 161}
+    },
+
+    -- Elapsed time
+    {
+        type = "text",
+        x = 180, y = 154,
+        text = "elapsed",
+        font = "Noto Sans",
+        font_size = 12,
+        colour = {{1, 0xFFFFFF, 1}}, -- White text
+        draw_me = true
+    },
+
+    -- Remaining time
+    {
+        type = "text",
+        x = 620, y = 154,
+        text = "remaining",
+        font = "Noto Sans",
+        font_size = 12,
         colour = {{1, 0xFFFFFF, 1}}, -- White text
         draw_me = true
     }
@@ -295,6 +364,7 @@ function conky_draw_image(path, x, y, w, h)
     local file = io.open(path, "rb")
     if not file or file:read("*a"):len() == 0 then
         if file then file:close() end
+        print("Error: Image file not found or empty: " .. path)
         cairo_destroy(cr)
         cairo_surface_destroy(cs)
         return
@@ -312,8 +382,12 @@ function conky_draw_image(path, x, y, w, h)
             cairo_scale(cr, scale_x, scale_y)
             cairo_set_source_surface(cr, image, x / scale_x, y / scale_y)
             cairo_paint(cr)
+        else
+            print("Error: Invalid image dimensions: " .. path)
         end
         cairo_surface_destroy(image)
+    else
+        print("Error: Failed to load image: " .. path)
     end
 
     cairo_destroy(cr)
@@ -322,7 +396,10 @@ end
 
 -- === Main drawing function ===
 function conky_draw_display()
-    if conky_window == nil then return end
+    if conky_window == nil then
+        print("Error: conky_window is nil")
+        return
+    end
 
     -- Execute cover script to update album art
     execute_cover_script()
@@ -330,16 +407,23 @@ function conky_draw_display()
     -- Fetch all metadata in one call
     local metadata = get_spotify_metadata()
 
+    -- Fetch progress data
+    local progress = get_progress_data()
+
     local cs = cairo_xlib_surface_create(conky_window.display, conky_window.drawable, conky_window.visual, conky_window.width, conky_window.height)
     local cr = cairo_create(cs)
     local canvas_width = conky_window.width
 
-    for _, box in ipairs(boxes_settings) do
+    for i, box in ipairs(boxes_settings) do
         if box.draw_me then
             local x, y, w, h = box.x, box.y, box.w or 0, box.h or 0
             if box.centre_x then x = get_centered_x(canvas_width, w) end
 
             if box.type == "background" then
+                if i == 12 then -- Progress bar (index 12 in boxes_settings)
+                    w = math.max(1, 470 * (progress.percent / 100)) -- Match border width (470px)
+--                    print("Drawing progress bar: w=" .. w .. ", percent=" .. progress.percent)
+                end
                 cairo_set_source_rgba(cr, hex_to_rgba(box.colour[1][2], box.colour[1][3]))
                 draw_custom_rounded_rectangle(cr, x, y, w, h, box.corners)
                 cairo_fill(cr)
@@ -388,6 +472,10 @@ function conky_draw_display()
                     text = metadata.artist
                 elseif box.text == "album" then
                     text = metadata.album
+                elseif box.text == "elapsed" then
+                    text = progress.elapsed
+                elseif box.text == "remaining" then
+                    text = "-" .. progress.remaining
                 end
                 draw_text(cr, x, y, text, box.font, box.font_size, box.colour)
             end

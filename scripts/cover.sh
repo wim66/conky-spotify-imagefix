@@ -2,7 +2,7 @@
 
 # Conky-Spotify Integration
 # Copyright (C) 2014 Madh93
-# Modified by @wim66 April 22 2025
+# Modified by @wim66 April 25, 2025
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,32 +17,53 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-id_current=$(cat ~/.conky/conky-spotify/current/current.txt 2>/dev/null || echo "")
-id_new=$(~/.conky/conky-spotify/scripts/id.sh)
+# Determine the script's directory
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CURRENT_DIR="$SCRIPT_DIR/../current"
+COVERS_DIR="$SCRIPT_DIR/../covers"
+TEMP_FILE=$(mktemp /tmp/conky-spotify-cover.XXXXXX)
+
+# Ensure covers directory exists
+mkdir -p "$COVERS_DIR"
+
+# Read current track ID and fetch new ID
+id_current=$(cat "$CURRENT_DIR/current.txt" 2>/dev/null || echo "")
+id_new=$("$SCRIPT_DIR/id.sh")
 dbus=$(busctl --user list | grep "spotify")
 
 if [ -z "$dbus" ]; then
-    cp ~/.conky/conky-spotify/empty.png ~/.conky/conky-spotify/current/current.png
-    echo "" > ~/.conky/conky-spotify/current/current.txt
+    cp "$CURRENT_DIR/empty.png" "$CURRENT_DIR/current.png"
+    echo "" > "$CURRENT_DIR/current.txt"
 else
-    echo "$id_new" > ~/.conky/conky-spotify/current/current.txt
+    echo "$id_new" > "$CURRENT_DIR/current.txt"
     imgname=$(echo "$id_new" | cut -d '/' -f5)
 
-    cover=$(ls ~/.conky/conky-spotify/covers 2>/dev/null | grep "$id_new" || echo "")
-
-    if grep -q "${imgname}" <<< "$cover"; then
-        magick ~/.conky/conky-spotify/covers/"$imgname".jpg ~/.conky/conky-spotify/current/current.png
+    # Check if cover exists in covers directory
+    if [ -f "$COVERS_DIR/${imgname}.png" ]; then
+        cp "$COVERS_DIR/${imgname}.png" "$CURRENT_DIR/current.png"
     else
-        imgurl=$(~/.conky/conky-spotify/scripts/imgurl.sh)
+        imgurl=$("$SCRIPT_DIR/imgurl.sh")
         if [ -n "$imgurl" ]; then
-            wget -q -O ~/.conky/conky-spotify/covers/"$imgname".jpg "$imgurl" &> /dev/null
-            touch ~/.conky/conky-spotify/covers/"$imgname".jpg
-            magick ~/.conky/conky-spotify/covers/"$imgname".jpg ~/.conky/conky-spotify/current/current.png
-            # Opruimen: houd alleen de nieuwste 10 covers
-            rm -f $(ls -t ~/.conky/conky-spotify/covers/* | awk 'NR>10')
-            rm -f wget-log
+            # Download to temp file and convert to PNG
+            if timeout 1 wget -q -O "$TEMP_FILE" "$imgurl"; then
+                magick "$TEMP_FILE" "$CURRENT_DIR/current.png"
+                # Validate PNG
+                if ! file "$CURRENT_DIR/current.png" | grep -q "PNG image data"; then
+                    cp "$CURRENT_DIR/empty.png" "$CURRENT_DIR/current.png"
+                else
+                    # Cache PNG in covers directory
+                    cp "$CURRENT_DIR/current.png" "$COVERS_DIR/${imgname}.png"
+                fi
+            else
+                cp "$CURRENT_DIR/empty.png" "$CURRENT_DIR/current.png"
+            fi
         else
-            cp ~/.conky/conky-spotify/empty.png ~/.conky/conky-spotify/current/current.png
+            cp "$CURRENT_DIR/empty.png" "$CURRENT_DIR/current.png"
         fi
     fi
+    # Clean up temporary file
+    rm -f "$TEMP_FILE"
 fi
+
+# Clean up: keep only the newest 10 PNGs in covers/
+find "$COVERS_DIR/" -maxdepth 1 -type f -name "*.png" -printf "%T@ %p\n" | sort -nr | awk 'NR>10 {print $2}' | xargs -r rm -f
