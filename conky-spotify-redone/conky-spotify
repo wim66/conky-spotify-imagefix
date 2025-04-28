@@ -39,5 +39,8 @@ conky.config = {
 };
 
 conky.text = [[
-
-]];
+${if_running spotify}
+${else}
+Spotify is not running
+${endif}
+]]

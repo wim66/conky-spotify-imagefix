@@ -1,6 +1,7 @@
 -- display.lua
 -- by @wim66
--- April 25, 2025
+-- v.1.2
+-- April 28, 2025
 
 -- === Required Cairo Modules ===
 require 'cairo'
@@ -52,6 +53,23 @@ local function execute_script(script_path)
     return result ~= "" and result or "Unknown"
 end
 
+-- === Check if Spotify is running with caching ===
+local last_status = nil
+local last_check_time = 0
+local function is_spotify_running()
+    local now = os.time()
+    if now - last_check_time < 5 and last_status ~= nil then
+        return last_status
+    end
+    local cmd = [[dbus-send --print-reply --dest=org.mpris.MediaPlayer2.spotify /org/mpris/MediaPlayer2 org.freedesktop.DBus.Properties.Get string:'org.mpris.MediaPlayer2.Player' string:'PlaybackStatus' 2>/dev/null]]
+    local handle = io.popen(cmd)
+    local result = handle:read("*a")
+    handle:close()
+    last_status = result:match("string") ~= nil
+    last_check_time = now
+    return last_status
+end
+
 -- === Execute cover script (no output expected) ===
 local function execute_cover_script()
     local script_path = parent_path .. "scripts/cover.sh"
@@ -70,12 +88,12 @@ local function get_spotify_metadata()
     local handle = io.popen(cmd .. " 2>&1")
     if not handle then
         print("Error fetching metadata")
-        return { title = "Unknown Title", artist = "Unknown Artist", album = "Unknown Album" }
+        return { title = "Unknown Title", artist = "Unknown Artist", album = "Unknown Album", status = "Paused" }
     end
     local output = handle:read("*a")
     handle:close()
 
-    local metadata = { title = "Unknown Title", artist = "Unknown Artist", album = "Unknown Album" }
+    local metadata = { title = "Unknown Title", artist = "Unknown Artist", album = "Unknown Album", status = "Paused" }
 
     -- Extract title
     local title = output:match('xesam:title.-variant%s+string%s+"([^"]+)"')
@@ -95,6 +113,18 @@ local function get_spotify_metadata()
         metadata.album = album
     end
 
+    -- Extract playback status
+    local status_cmd = [[dbus-send --print-reply --dest=org.mpris.MediaPlayer2.spotify /org/mpris/MediaPlayer2 org.freedesktop.DBus.Properties.Get string:'org.mpris.MediaPlayer2.Player' string:'PlaybackStatus' 2>/dev/null]]
+    local status_handle = io.popen(status_cmd)
+    if status_handle then
+        local status_output = status_handle:read("*a")
+        status_handle:close()
+        local status = status_output:match('string%s+"([^"]+)"')
+        if status then
+            metadata.status = status
+        end
+    end
+
     return metadata
 end
 
@@ -106,7 +136,6 @@ local function get_progress_data()
     percent = tonumber(percent) or 0
     elapsed = elapsed or "0:00"
     remaining = remaining or "0:00"
---    print("Progress data: percent=" .. percent .. ", elapsed=" .. elapsed .. ", remaining=" .. remaining)
     return {
         percent = percent,
         elapsed = elapsed,
@@ -153,8 +182,8 @@ local border_color2 = parse_border_color2(border_COLOR2)
 -- === Table of drawable elements ===
 local boxes_settings = {
     {
-        type = "background", -- Album art background
-        x = 172, y = 2, w = 650, h = 167,
+        type = "background", -- Track info background
+        x = 172, y = 2, w = 488, h = 167,
         centre_x = false,
         corners = {0, 0, 0, 0},
         draw_me = true,
@@ -163,19 +192,24 @@ local boxes_settings = {
 
     {
         type = "layer2", -- Track info background
-        x = 172, y = 2, w = 485, h = 167,
+        x = 172, y = 2, w = 488, h = 167,
         centre_x = false,
         corners = {0, 0, 0, 0},
-        draw_me = false,
-        linear_gradient = {172, 85, 653, 85},
-        colours = { {0, 0x0000ff, 0.5}, {0.45, 0x0000ff, 0.75}, {0.55, 0x0000ff, 0.75}, {1, 0x0000ff, 0.5} }
+        draw_me = true,
+        linear_gradient = {172, 2, 172, 169}, -- Gradient from top to bottom
+        colours = {
+            {0, 0x000000, 0.2},
+            {0.33, 0xC0C0C0, 0.2},
+            {0.66, 0xC0C0C0, 0.2},
+            {1, 0x000000, 0.2}
+        }
     },
 
     {
         type = "border", -- Track info border
         x = 172, y = 2, w = 488, h = 167,
         centre_x = false,
-        corners = {0, 0, 0, 0},  -- Top-left, Top-right, Bottom-right, Bottom-left
+        corners = {0, 0, 0, 0},
         draw_me = true,
         border = 3,
         colour = border_color,
@@ -193,7 +227,7 @@ local boxes_settings = {
         type = "border", -- Image border
         x = 2, y = 2, w = 167, h = 167,
         centre_x = false,
-        corners = {0, 0, 0, 0},  -- Top-left, Top-right, Bottom-right, Bottom-left
+        corners = {0, 0, 0, 0},
         draw_me = true,
         border = 3,
         colour = border_color2,
@@ -207,106 +241,122 @@ local boxes_settings = {
         text = "Title:",
         font = "Noto Sans",
         font_size = 12,
-        colour = {{1, 0xFFFFFF, 1}}, -- White text
+        colour = {{1, 0xFFFF00, 1}}, 
         draw_me = true
     },
 
     -- Metadata: Title
     {
         type = "text",
-        x = 190, y = 46,
+        x = 190, y = 44,
         text = "title",
         font = "GE Inspira",
         font_size = 22,
-        colour = {{1, 0xFFFFFF, 1}}, -- White text
+        colour = {{1, 0xFFBC6B, 1}}, 
         draw_me = true
     },
 
     -- Label: Artist
     {
         type = "text",
-        x = 180, y = 66,
+        x = 180, y = 64,
         text = "Artist:",
         font = "Noto Sans",
         font_size = 12,
-        colour = {{1, 0xFFFFFF, 1}}, -- White text
+        colour = {{1, 0xFFFF00, 1}}, 
         draw_me = true
     },
 
     -- Metadata: Artist
     {
         type = "text",
-        x = 190, y = 92,
+        x = 190, y = 88,
         text = "artist",
         font = "GE Inspira",
         font_size = 22,
-        colour = {{1, 0xFFFFFF, 1}}, -- White text
+        colour = {{1, 0xFFBC6B, 1}}, 
         draw_me = true
     },
 
     -- Label: Album
     {
         type = "text",
-        x = 180, y = 112,
+        x = 180, y = 108,
         text = "Album:",
         font = "Noto Sans",
         font_size = 12,
-        colour = {{1, 0xFFFFFF, 1}}, -- White text
+        colour = {{1, 0xFFFF00, 1}}, 
         draw_me = true
     },
 
     -- Metadata: Album
     {
         type = "text",
-        x = 190, y = 138,
+        x = 190, y = 132,
         text = "album",
         font = "GE Inspira",
         font_size = 22,
-        colour = {{1, 0xFFFFFF, 1}}, -- White text
+        colour = {{1, 0xFFBC6B, 1}}, 
         draw_me = true
     },
 
     -- Progress bar (filled)
     {
         type = "background",
-        x = 180, y = 158, w = 0, h = 6, -- Dynamic width
+        x = 210, y = 158, w = 0, h = 6,
         centre_x = false,
-        corners = {0, 0, 0, 0},
+        corners = {3, 3, 3, 3}, -- Rounded corners
         draw_me = true,
-        colour = {{1, 0xff5500, 1}} -- Orange
+        linear_gradient = {210, 161, 640, 161}, -- Adjusted for 430px
+        colours = { 
+            {0, 0xFFAA00, 1},
+            {0.5, 0xFF5500, 1},
+            {1, 0x802a00, 1}
+        }
     },
 
     -- Progress bar border
     {
         type = "border",
-        x = 180, y = 158, w = 470, h = 6,
+        x = 210, y = 158, w = 430, h = 6,
         centre_x = false,
-        corners = {0, 0, 0, 0},
+        corners = {3, 3, 3, 3}, -- Adjusted for consistency
         draw_me = true,
         border = 1,
-        colour = {{1, 0xaa7b9e, 1}}, -- Purple-ish
-        linear_gradient = {180, 161, 650, 161}
+        colour = {{1, 0xaa7b9e, 1}},
+        linear_gradient = {210, 161, 640, 161} -- Adjusted for 430px
     },
 
     -- Elapsed time
     {
         type = "text",
-        x = 180, y = 154,
+        x = 210, y = 154,
         text = "elapsed",
         font = "Noto Sans",
         font_size = 12,
-        colour = {{1, 0xFFFFFF, 1}}, -- White text
+        colour = {{1, 0xFFFFFF, 1}}, 
         draw_me = true
     },
 
     -- Remaining time
     {
         type = "text",
-        x = 620, y = 154,
+        x = 610, y = 154,
         text = "remaining",
         font = "Noto Sans",
         font_size = 12,
-        colour = {{1, 0xFFFFFF, 1}}, -- White text
+        colour = {{1, 0xFFFFFF, 1}}, 
+        draw_me = true
+    },
+
+    -- Playback status indicator
+    {
+        type = "text",
+        x = 184, y = 158,
+        text = "status",
+        font = "Symbola",
+        font_size = 24,
+        colour = {{1, 0xFFFFFF, 1}}, 
         draw_me = true
     }
 }
@@ -333,13 +383,18 @@ local function draw_custom_rounded_rectangle(cr, x, y, w, h, r)
     cairo_close_path(cr)
 end
 
--- === Draw text ===
+-- === Draw text with shadow ===
 local function draw_text(cr, x, y, text, font, font_size, color)
     if not text or text == "" then
         text = "Unknown"
     end
     cairo_select_font_face(cr, font, CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL)
     cairo_set_font_size(cr, font_size)
+    -- Draw shadow
+    cairo_set_source_rgba(cr, 0, 0, 0, 0.5)
+    cairo_move_to(cr, x+1, y+1)
+    cairo_show_text(cr, text)
+    -- Draw text
     cairo_set_source_rgba(cr, hex_to_rgba(color[1][2], color[1][3]))
     cairo_move_to(cr, x, y)
     cairo_show_text(cr, text)
@@ -401,6 +456,12 @@ function conky_draw_display()
         return
     end
 
+    -- Check if Spotify is running
+    if not is_spotify_running() then
+        print("Spotify is not running")
+        return
+    end
+
     -- Execute cover script to update album art
     execute_cover_script()
 
@@ -421,12 +482,22 @@ function conky_draw_display()
 
             if box.type == "background" then
                 if i == 12 then -- Progress bar (index 12 in boxes_settings)
-                    w = math.max(1, 470 * (progress.percent / 100)) -- Match border width (470px)
---                    print("Drawing progress bar: w=" .. w .. ", percent=" .. progress.percent)
+                    w = math.max(1, 430 * (progress.percent / 100)) -- Match border width (430px)
                 end
-                cairo_set_source_rgba(cr, hex_to_rgba(box.colour[1][2], box.colour[1][3]))
-                draw_custom_rounded_rectangle(cr, x, y, w, h, box.corners)
-                cairo_fill(cr)
+                if box.linear_gradient and box.colours then
+                    local grad = cairo_pattern_create_linear(unpack(box.linear_gradient))
+                    for _, color in ipairs(box.colours) do
+                        cairo_pattern_add_color_stop_rgba(grad, color[1], hex_to_rgba(color[2], color[3]))
+                    end
+                    cairo_set_source(cr, grad)
+                    draw_custom_rounded_rectangle(cr, x, y, w, h, box.corners)
+                    cairo_fill(cr)
+                    cairo_pattern_destroy(grad)
+                else
+                    cairo_set_source_rgba(cr, hex_to_rgba(box.colour[1][2], box.colour[1][3]))
+                    draw_custom_rounded_rectangle(cr, x, y, w, h, box.corners)
+                    cairo_fill(cr)
+                end
 
             elseif box.type == "layer2" then
                 local grad = cairo_pattern_create_linear(unpack(box.linear_gradient))
@@ -476,6 +547,8 @@ function conky_draw_display()
                     text = progress.elapsed
                 elseif box.text == "remaining" then
                     text = "-" .. progress.remaining
+                elseif box.text == "status" then
+                    text = metadata.status == "Playing" and "▶" or "⏸"
                 end
                 draw_text(cr, x, y, text, box.font, box.font_size, box.colour)
             end

@@ -24,6 +24,7 @@ To use this configuratsion, you need the following tools:
 - **Conky**: A lightweight system monitor.
 - **ImageMagick**: For album art conversion to a suitable format.
 - **Spotify**: With DBus support enabled.
+- **Symbola font** For the Redone version play/pause symbol
 
 ## Why PNG Conversion?s
 This setup converts Spotify album art from JPG to PNG format using ImageMagick in the `cover.sh` script. The reasons for this conversion are:
