@@ -458,7 +458,7 @@ function conky_draw_display()
 
     -- Check if Spotify is running
     if not is_spotify_running() then
-        print("Spotify is not running")
+       -- print("Spotify is not running")
         return
     end
 

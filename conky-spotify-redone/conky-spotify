@@ -2,7 +2,7 @@
 
 conky.config = {
     background = true,
-    font = 'GE Inspira:size=8',
+    font = 'GE Inspira:size=12',
     uppercase = false,
     override_utf8_locale = true,
     default_color = 'white',
@@ -41,6 +41,6 @@ conky.config = {
 conky.text = [[
 ${if_running spotify}
 ${else}
-Spotify is not running
+${alignr 20}${voffset 0}Spotify is not running
 ${endif}
 ]]
